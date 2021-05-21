@@ -527,29 +527,23 @@ class V2Listener(dict):
                     candidates.append(( matcher, action, rv ))
 
                 for matcher, action, rv in candidates:
-                    logger.info(f"      check {matcher} - {action}")
-
                     route_precedence = rv.route.get('_precedence', None)
                     route_hosts = rv.route['_host_constraints']
+                    extra_info = ""
 
                     if rv.route["match"].get("prefix", None) == "/.well-known/acme-challenge/":
                         # We need to be sure to route ACME challenges, no matter what else is going
                         # on (this is the infamous ACME hole-puncher mentioned everywhere).
-                        if True or self._log_debug:
-                            logger.info(f"V2Listeners: {self.name} {vhostname} force Route for ACME challenge")
+                        extra_info = " (force Route for ACME challenge)"
                         action = "Route"
                     elif ('*' not in route_hosts) and (vhostname != '*') and (not route_host_match(route_hosts, vhostname)):
                         # Drop this because the host is mismatched.
-                        if True or self._log_debug:
-                            logger.info(
-                                f"V2Listeners: {self.name} {vhostname} {matcher}-{action}: force Reject (rhosts {sorted(route_hosts)}, vhost {vhostname})")
+                        extra_info = f" (force Reject for mismatched host {sorted(route_hosts)})"
                         action = "Reject"
                     elif (self.config.ir.edge_stack_allowed and
                             (route_precedence == -1000000) and
                             (rv.route["match"].get("safe_regex", {}).get("regex", None) == "^/$")):
-                        if True or self._log_debug:
-                            logger.info(
-                                f"V2Listeners: {self.name} {vhostname} {matcher}-{action}: force Route for fallback Mapping")
+                        extra_info = " (force Route for fallback Mapping)"
                         action = "Route"
 
                     if action != 'Reject':
@@ -557,13 +551,14 @@ class V2Listener(dict):
                         # might be a host redirect. When we talk about "Redirect", we really mean "redirect to HTTPS".
 
                         if True or self._log_debug:
-                            logger.info(
-                                f"V2Listeners: {self.name} {vhostname} {matcher}-{action}: Accept as {action}")
+                            logger.info("      %s - %s: accept on %s %s%s",
+                                        matcher, action, self.name, vhostname, extra_info)
                         vhost.routes.append(rv.get_variant(matcher, action.lower()))
                     else:
                         if True or self._log_debug:
-                            logger.info(
-                                f"V2Listeners: {self.name} {vhostname} {matcher}-{action}: Drop")
+                            logger.info("      %s - %s: drop from %s %s%s",
+                                        matcher, action, self.name, vhostname, extra_info)
+                    
 
     def finalize_http(self) -> None:
         for vhostkey, vhost in self._vhosts.items():
