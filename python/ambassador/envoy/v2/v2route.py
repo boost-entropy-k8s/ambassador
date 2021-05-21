@@ -60,6 +60,10 @@ def v2prettyroute(route: DictifiedV2Route) -> str:
         if header == ':authority':
             if exact:
                 host = exact
+            elif 'prefix_match' in header:
+                host = header['prefix_match'] + '*'
+            elif 'suffix_match' in header:
+                host = '*' + header['suffix_match']
             elif 'safe_regex_match' in header:
                 host = header['safe_regex_match']['regex']
         elif name == 'x-forwarded-proto':
@@ -530,34 +534,44 @@ class V2Route(Cacheable):
 
             # Take all the HeaderMatchers...
             header_matchers = self.get("match", {}).get("headers", [])
+
             for header in header_matchers:
-                # ... and look for ones that exact_match on :authority.
-                if header.get("name") == ":authority" and "exact_match" in header:
-                    exact_match = header["exact_match"]
+                # ... and look for exact_match, prefix_match, or suffix_match on :authority.
+                # 
+                # Why don't we do any pruning on regex matches? Well, the hostglobs are _globs_, and 
+                # if we try to prune on regex matches here, we're left trying to figure out whether
+                # the glob and the regex are equivalent, which is somewhere between horrible and 
+                # NP-hard. So, for now, never prune anything if we see a regex match. (Given that
+                # globs are supported, regexes shouldn't be needed much anyway.)
+                
+                if header.get("name") == ":authority":
+                    pfx_match = header.get("prefix_match", None)
+                    sfx_match = header.get("suffix_match", None)
+                    exact_match = header.get("exact_match", None)
 
-                    if "*" in exact_match:
-                        # A real :authority header will never contain a "*", so if this route has an
-                        # exact_match looking for one, then this route is unreachable.
-                        hostglobs = set()
-                        break # hostglobs is empty, no point in doing more work
+                    # Whichever match is set, if we get a match, trim hostglobs down to just
+                    # the matching value.
+                    matching_globs: Set[str] = set()
 
-                    elif any(hostglob_matches(glob, exact_match) for glob in hostglobs):
-                        # The exact_match that this route is looking for is matched by one or more
-                        # of the hostglobs; so this route is reachable (so far).  Set hostglobs to
-                        # just match that route.  Because we already checked if the exact_match
-                        # contains a "*", we don't need to worry about it possibly being interpreted
-                        # incorrectly as a glob.
-                        hostglobs = set([exact_match])
-                        # Don't "break" here--if somehow this route has multiple disagreeing
-                        # HeaderMatchers on :authority, then it's unreachable and we want the next
-                        # iteration of the loop to trigger the "else" clause and prune hostglobs
-                        # down to the empty set.
+                    if pfx_match:
+                        matching_globs = { glob for glob in hostglobs if glob.startswith(pfx_match) }
+                    elif sfx_match:
+                        matching_globs = { glob for glob in hostglobs if glob.endswith(sfx_match) }
+                    elif exact_match:
+                        matching_globs = { glob for glob in hostglobs if glob == exact_match }
 
-                    else:
-                        # The exact_match that this route is looking for isn't matched by any of the
-                        # hostglobs; so this route is unreachable.
-                        hostglobs = set()
-                        break # hostglobs is empty, no point in doing more work
+                    if matching_globs:
+                        # Prune hostglobs down to just the matches. Don't break here -- if somehow
+                        # this route has more HeaderMatchers on :authority, take them into account
+                        # too, so that if we have multiple incompatible matchers, we successfully
+                        # filter to the empty set.
+                        #
+                        # Note that if we had _no_ matches, then we get the empty set right away, 
+                        # which is OK.
+                        #
+                        # XXX That multiple-:authority-matchers case is "impossible" in Ambassador
+                        # right now, but, well, maybe it won't be later.
+                        hostglobs = matching_globs
 
         return hostglobs
 
@@ -636,12 +650,31 @@ class V2Route(Cacheable):
         group_headers = mapping_group.get('headers', [])
 
         for group_header in group_headers:
-            header = { 'name': group_header.get('name') }
+            header_name = group_header.get('name')
+            header_value = group_header.get('value')
 
+            header = { 'name': header_name }
+
+            # Is this a regex?
             if group_header.get('regex'):
-                header.update(regex_matcher(config, group_header.get('value'), key='regex_match'))
+                header.update(regex_matcher(config, header_value, key='regex_match'))
             else:
-                header['exact_match'] = group_header.get('value')
+                if header_name == ':authority':
+                    # The authority header is special, because its value is a glob.
+                    # (This works without the user marking it as such because '*' isn't
+                    # valid in DNS names, so we know that treating a name with a '*' as
+                    # as exact match will always fail.)
+                    if header_value.startswith('*'):
+                        header['suffix_match'] = header_value[1:]
+                    elif header_value.endswith('*'):
+                        header['prefix_match'] = header_value[:-1]
+                    else:
+                        # But wait! What about 'foo.*.com'?? Turns out Envoy doesn't 
+                        # support that in the places it actually does host globbing,
+                        # so we won't either for the moment.
+                        header['exact_match'] = header_value
+                else:
+                    header['exact_match'] = header_value
 
             headers.append(header)
 

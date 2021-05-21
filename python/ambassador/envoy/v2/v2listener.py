@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License
-from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, TYPE_CHECKING
 from typing import cast as typecast
 
 from os import environ
@@ -24,7 +24,7 @@ from ...ir.irtcpmappinggroup import IRTCPMappingGroup
 from ...utils import dump_json, parse_bool
 
 from .v2httpfilter import V2HTTPFilter
-from .v2route import DictifiedV2Route, v2prettyroute, V2RouteVariants
+from .v2route import DictifiedV2Route, v2prettyroute, V2RouteVariants, hostglob_matches
 from .v2tls import V2TLSContext
 from .v2virtualhost import V2VirtualHost
 
@@ -32,6 +32,10 @@ if TYPE_CHECKING:
     from ...ir.irhost import IRHost             # pragma: no cover
     from ...ir.irtlscontext import IRTLSContext # pragma: no cover
     from . import V2Config                      # pragma: no cover
+
+
+def route_host_match(route_hosts: Set[str], vhostname: str) -> bool:
+    return any(hostglob_matches(route_glob, vhostname) for route_glob in route_hosts)    
 
 
 class V2Listener(dict):
@@ -534,7 +538,7 @@ class V2Listener(dict):
                         if True or self._log_debug:
                             logger.info(f"V2Listeners: {self.name} {vhostname} force Route for ACME challenge")
                         action = "Route"
-                    elif ('*' not in route_hosts) and (vhostname != '*') and (vhostname not in route_hosts):
+                    elif ('*' not in route_hosts) and (vhostname != '*') and (not route_host_match(route_hosts, vhostname)):
                         # Drop this because the host is mismatched.
                         if True or self._log_debug:
                             logger.info(
