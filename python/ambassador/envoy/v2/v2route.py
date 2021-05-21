@@ -219,9 +219,6 @@ class V2Route(Cacheable):
         if group.get('precedence'):
             self['_precedence'] = group['precedence']
 
-        # Next up, save our host constraints.
-        self['_host_constraints'] = self.host_constraints(True)
-
         envoy_route = EnvoyRoute(group).envoy_route
 
         mapping_prefix = mapping.get('prefix', None)
@@ -507,6 +504,8 @@ class V2Route(Cacheable):
 
         self['route'] = route
 
+        # Finally, save our host constraints.
+        self['_host_constraints'] = self.host_constraints(True)
     def host_constraints(self, prune_unreachable_routes: bool) -> Set[str]:
         """Return a set of hostglobs that match (a superset of) all hostnames that this route can
         apply to.
