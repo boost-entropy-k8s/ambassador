@@ -1,0 +1,6 @@
+---
+apiVersion: getambassador.io/v2
+kind: Host
+metadata:
+  name: test-host
+spec: {}

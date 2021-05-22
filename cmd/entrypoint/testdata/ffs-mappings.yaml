@@ -1,0 +1,8 @@
+---
+apiVersion: getambassador.io/v2
+kind: Mapping
+metadata:
+  name: test-mapping
+spec:
+  prefix: /test-mapping/
+  service: test-service
